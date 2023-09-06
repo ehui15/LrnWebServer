@@ -9,8 +9,11 @@
 #include <strings.h>
 #include <iostream>
 
+#include "httpconnection.h"
+
 const int MAX_EVENT_NUMBER = 10000;
 const int BUFFER_SIZE = 1024;
+const int MAX_FD = 65535; // todo
 
 int WebServer::setNonblocking(int fd)
 {
@@ -39,29 +42,8 @@ void WebServer::doWithRead(int sockFd)
     // ET模式
     if (m_epollTriggerMode == true)
     {
-        // ET模式下可读事件只会触发一次，所以需要循环读，把缓存中的数据全部读出
-        while (1)
-        {
-            memset(buf, '\0', BUFFER_SIZE);
-            int ret = recv(sockFd, buf, BUFFER_SIZE - 1, 0);
-            if (ret < 0)
-            {
-                if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
-                {
-                    std::cout << "doWithRead(): 待会读。" << std::endl;
-                    break;
-                }
-                close(sockFd);
-            }
-            else if (ret == 0)
-            {
-                close(sockFd);
-            }
-            else
-            {
-                std::cout << "doWithRead(): 读取" << ret << "字节的内容。" << std::endl;
-            }
-        }
+        (m_pConnections + sockFd)->setSocket(sockFd);
+        m_theadPool.append(m_pConnections + sockFd);
     }
     else // LT模式
     {
@@ -80,9 +62,10 @@ WebServer::WebServer(int port) :
     m_listenFd(-1),
     m_port(port), 
     m_epollFd(-1),
-    m_epollTriggerMode(true)
+    m_epollTriggerMode(true),
+    m_theadPool()
 {
-
+    m_pConnections = new HttpConnection[MAX_FD];
 }
 
 WebServer::~WebServer()
@@ -126,7 +109,7 @@ void WebServer::init()
         return ;
     }
     // 创建epoll内核事件表
-    m_epollFd = epoll_create(5); // 参数给内核一个提示，告诉事件表需要多大，现在并不起作用
+    m_epollFd = epoll_create(5); // 参数给内核一个提示，告诉事件表需要多大，现在已经被弃用，但是不要传0
     if (m_epollFd == -1)
     {
         std::cerr << "epoll_create(): 执行失败。" << std::endl;
