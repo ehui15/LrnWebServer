@@ -23,40 +23,62 @@ int WebServer::setNonblocking(int fd)
     return oldOption;
 }
 
-void WebServer::addFd(int epollFd, int fd, bool enableET)
+void WebServer::addConnectionFd(int epollFd, int fd)
 {
     epoll_event event;
     event.data.fd = fd;
     event.events = EPOLLIN;
-    if (enableET)
-    {
-        event.events |= EPOLLET;
-    }
+    event.events |= EPOLLET;
+    // 注册EPOLLONESHOT事件，保证一个socketFd同时只会有一个事件发生
+    event.events |= EPOLLONESHOT;
     epoll_ctl(epollFd, EPOLL_CTL_ADD, fd, &event);
     setNonblocking(fd);
 }
 
-void WebServer::doWithRead(int sockFd)
+void WebServer::dispatchTask(int sockFd, TaskType taskType)
 {
-    char buf[BUFFER_SIZE];
-    // ET模式
-    if (m_epollTriggerMode == true)
+    if (taskType == WebServer::ReadTask)
     {
-        (m_pConnections + sockFd)->setSocket(sockFd);
-        m_theadPool.append(m_pConnections + sockFd);
+        (m_pConnections + sockFd)->init(sockFd, m_epollFd, HTTPConnection::Read);
     }
-    else // LT模式
+    else if (taskType == WebServer::WriteTask)
     {
-        memset(buf, '\0', BUFFER_SIZE);
-        int ret = recv(sockFd, buf, BUFFER_SIZE - 1, 0);
-        if (ret <= 0)
-        {
-            close(sockFd);
-            return ;
-        }
-        std::cout << "doWithRead(): 读取" << ret << "字节的内容。" << std::endl;
+        (m_pConnections + sockFd)->init(sockFd, m_epollFd, HTTPConnection::Write);
     }
+    else
+    {
+        // error
+    }
+    m_theadPool.append(m_pConnections + sockFd);
 }
+
+// void WebServer::doWithRead(int sockFd)
+// {
+//     char buf[BUFFER_SIZE];
+//     // ET模式
+//     if (m_epollTriggerMode == true)
+//     {
+//         (m_pConnections + sockFd)->init(sockFd, m_epollFd, HTTPConnection::READ);
+//         m_theadPool.append(m_pConnections + sockFd);
+//     }
+//     else // LT模式
+//     {
+//         memset(buf, '\0', BUFFER_SIZE);
+//         int ret = recv(sockFd, buf, BUFFER_SIZE - 1, 0);
+//         if (ret <= 0)
+//         {
+//             close(sockFd);
+//             return ;
+//         }
+//         std::cout << "doWithRead(): 读取" << ret << "字节的内容。" << std::endl;
+//     }
+// }
+
+// void WebServer::doWithWrite(int sockFd)
+// {
+//     (m_pConnections + sockFd)->init(sockFd, m_epollFd, HTTPConnection::READ);
+//     m_theadPool.append(m_pConnections + sockFd);
+// }
 
 WebServer::WebServer(int port) : 
     m_listenFd(-1),
@@ -65,7 +87,7 @@ WebServer::WebServer(int port) :
     m_epollTriggerMode(true),
     m_theadPool()
 {
-    m_pConnections = new HttpConnection[MAX_FD];
+    m_pConnections = new HTTPConnection[MAX_FD];
 }
 
 WebServer::~WebServer()
@@ -115,8 +137,13 @@ void WebServer::init()
         std::cerr << "epoll_create(): 执行失败。" << std::endl;
         return ;
     }
-    // 注册epoll事件
-    addFd(m_epollFd, m_listenFd, m_epollTriggerMode);
+    // m_listenFd注册epoll事件
+    epoll_event event;
+    event.data.fd = m_listenFd;
+    event.events = EPOLLIN;
+    event.events |= EPOLLET;
+    epoll_ctl(m_epollFd, EPOLL_CTL_ADD, m_listenFd, &event);
+    setNonblocking(m_listenFd);
 }
 
 void WebServer::eventLoop()
@@ -128,6 +155,7 @@ void WebServer::eventLoop()
         if (num < 0)
         {
             std::cerr << "epoll_wait(): 执行出错。" << std::endl;
+            std::cerr << "errno: " << errno << std::endl;
             break;
         }
         for (int i = 0; i < num; i++)
@@ -138,15 +166,21 @@ void WebServer::eventLoop()
                 struct sockaddr_in clientAddr;
                 socklen_t clientAddrLength = sizeof(clientAddr);
                 int connFd = accept(m_listenFd, (struct sockaddr *)&clientAddr, &clientAddrLength);
-                addFd(m_epollFd, connFd, m_epollTriggerMode);
+                addConnectionFd(m_epollFd, connFd);
             }
             else if (events[i].events & EPOLLIN)
             {
-                doWithRead(sockFd);
+                // doWithRead(sockFd);
+                dispatchTask(sockFd, WebServer::ReadTask);
+            }
+            else if (events[i].events & EPOLLOUT)
+            {
+                // doWithWrite(sockFd);
+                dispatchTask(sockFd, WebServer::WriteTask);
             }
             else
             {
-                // 暂不处理
+                // do nothing
             }
         }
     }

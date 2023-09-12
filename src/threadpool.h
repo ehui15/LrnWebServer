@@ -8,6 +8,7 @@
 #include <mutex>
 
 #include "sem.h"
+#include "httpconnection.h"
 
 template<typename T>
 class ThreadPool
@@ -113,7 +114,19 @@ void ThreadPool<T>::run()
         }
         if (!pTask)
             continue;
-        pTask->process();
+        if (pTask->m_workState == HTTPConnection::Read)
+        {
+            pTask->processRead();
+        }
+        else if (pTask->m_workState == HTTPConnection::Write)
+        {
+            pTask->processWrite();
+        }
+        else
+        {
+            // error
+            continue;
+        }
     }
 }
 #endif

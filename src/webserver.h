@@ -3,21 +3,28 @@
 
 #include "threadpool.h"
 
-class HttpConnection;
+class HTTPConnection;
 
 class WebServer
 {
 private:
+    // 任务类型
+    enum TaskType
+    {
+        ReadTask = 0,
+        WriteTask
+    };
     int setNonblocking(int fd);
-    void addFd(int epollFd, int fd, bool enableET);
-    void doWithRead(int sockFd);
-
+    void addConnectionFd(int epollFd, int fd);
+    // void doWithRead(int sockFd);
+    // void doWithWrite(int sockFd);
+    void dispatchTask(int sockFd, TaskType taskType);
     int m_listenFd;
     int m_port;
     int m_epollFd;
     int m_epollTriggerMode; // true代表ET，false代表LT
-    ThreadPool<HttpConnection> m_theadPool;
-    HttpConnection *m_pConnections;
+    ThreadPool<HTTPConnection> m_theadPool;
+    HTTPConnection *m_pConnections;
 public:
     WebServer(int port);
     ~WebServer();
