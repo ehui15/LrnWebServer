@@ -21,7 +21,8 @@ HTTPConnection::~HTTPConnection()
 
 void HTTPConnection::processRead()
 {
-    RequestResult requestResult = readAndParse();
+    readRequest();
+    RequestResult requestResult = parseRequest();
     if (requestResult == GetRequest)
     {
         prepareWrite();
@@ -34,7 +35,7 @@ void HTTPConnection::processRead()
     }
 }
 
-HTTPConnection::RequestResult HTTPConnection::readAndParse()
+void HTTPConnection::readRequest()
 {
     // ET模式下可读事件只会触发一次，所以需要循环读，把缓存中的数据全部读出
     while (1)
@@ -60,7 +61,10 @@ HTTPConnection::RequestResult HTTPConnection::readAndParse()
             std::cout << "doWithRead(): 读取" << readBytes << "字节的内容。" << std::endl;
         }
     }
-    // 解析
+}
+
+HTTPConnection::RequestResult HTTPConnection::parseRequest()
+{
     char lineBuffer[LINE_BUFFER_SIZE];
     int parseIndex = 0;
     ParseState state = RequestLine;
@@ -174,49 +178,73 @@ HTTPConnection::RequestResult HTTPConnection::parseHeaderLine(char *pLineBuffer)
 
 void HTTPConnection::prepareWrite()
 {
-    char *pWrite = m_writeBuffer;
-    // 构造响应行
-    int writeBytes = sprintf(pWrite, "HTTP/1.1 200 OK\r\n");
-    pWrite += writeBytes;
-    m_writeBufferSize += writeBytes;
     // 构造响应头
     if (strcasecmp(m_resourcePath, "/") == 0)
     {
         strcat(m_resourcePath, "index.html");
     }
+    std::cout << "请求URL: " << m_resourcePath << std::endl;
+    // 添加文件后缀
+    std::string url(m_resourcePath);
+    if (url.find('.') == std::string::npos)
+    {
+        strcat(m_resourcePath, ".html");
+    }
+    // 判断文件是否存在
     char filePath[PATH_MAX] = "../resource";
     strcat(filePath, m_resourcePath);
-    std::ifstream fileStream(filePath, std::ios::binary);
-    if (!fileStream.is_open())
+    strcpy(m_resourcePath, filePath);
+    puts(m_resourcePath);
+    std::ifstream fileStream(m_resourcePath);
+    if (fileStream.good())
     {
-        std::cerr << "HTTPConnection::processWrite(): 无法打开文件。" << std::endl;
-        fileStream.close();
-        return ;
+        // 构造响应头
+        addResponseLine("HTTP/1.1 200 OK");
+        // 获取文件类型
+        std::string contentType;
+        std::string filePath(m_resourcePath);
+        size_t lastDotPos = filePath.find_last_of('.');
+        if (lastDotPos != std::string::npos)
+        {
+            contentType = filePath.substr(lastDotPos + 1);
+        }
+        if (contentType == "ico")
+        {
+            contentType = std::string("text/x-icon");
+        }
+        else if (contentType == "html")
+        {
+            contentType = std::string("text/html; charset=utf-8");
+        }
+        else if (contentType == ".jpeg" || contentType == "jpg")
+        {
+            contentType = std::string("image/jpeg");
+        }
+        else
+        {
+            contentType = std::string("text/plain; charset=utf-8");
+        }
+        addResponseHead("Content-Type", contentType);
+        // 获取文件大小
+        fileStream.seekg(0, std::ios::end);
+        std::streampos fileSize = fileStream.tellg();
+        if (fileSize == -1)
+        {
+            std::cerr << "prepareWrite(): 无法获取文件大小。" << std::endl;
+            return ;
+        }
+        addResponseHead("Content-Length", std::to_string(fileSize));
+        addResponseLine("");
     }
-    fileStream.seekg(0, std::ios::end);
-    std::streampos fileSize = fileStream.tellg();
-    if (fileSize == -1)
+    else
     {
-        std::cerr << "HTTPConnection::processWrite(): 无法获取文件大小。" << std::endl;
-        return ;
+        addResponseLine("HTTP/1.1 404 Not Found");
+        addResponseHead("Content-type", "text/html; charset=utf-8");
+        addResponseHead("Content-Length", "663");
+        addResponseLine("");
+        strcpy(m_resourcePath, "../resource/404.html");
     }
-    writeBytes = sprintf(pWrite, "Content-Length: %d\r\n", (int)fileSize);
-    pWrite += writeBytes;
-    m_writeBufferSize += writeBytes;
-    writeBytes = sprintf(pWrite, "Content-Type: %s\r\n", "text/html");
-    pWrite += writeBytes;
-    m_writeBufferSize += writeBytes;
-    writeBytes = sprintf(pWrite, "Connection: %s\r\n", "close");
-    pWrite += writeBytes;
-    m_writeBufferSize += writeBytes;
-    writeBytes = sprintf(pWrite, "\r\n");
-    pWrite += writeBytes;
-    m_writeBufferSize += writeBytes;
-    // 添加内容
-    fileStream.seekg(0, std::ios::beg);
-    fileStream.read(pWrite, fileSize);
     fileStream.close();
-    m_writeBufferSize += fileSize;
 }
 
 void HTTPConnection::closeSocket()
@@ -228,24 +256,72 @@ void HTTPConnection::closeSocket()
 
 void HTTPConnection::processWrite()
 {
+    // 发送报文头
     int writeBytes = 0;
-
     while (writeBytes != m_writeBufferSize)
     {
         int bytes = send(m_socketFd, m_writeBuffer + writeBytes, m_writeBufferSize - writeBytes, 0);
+        std::cout << "send(): " << bytes << " 字节报文头数据已发送。" << std::endl;
         if (bytes < 0)
         {
             std::cerr << "processWrite(): send()出错。" << std::endl;
-            return ;
+            break;
         }
         writeBytes += bytes;
     }
+    // 发送报文内容
+    std::ifstream file(m_resourcePath, std::ios::binary);
+    if (!file.is_open())
+    {
+        std::cerr << "processWrite(): 无法打开文件。" << std::endl;
+        resetEpollEvent(EPOLLIN);
+        return ;
+    }
+    char buffer[WRITE_BUFFER_SIZE];
+    while (!file.eof())
+    {
+        file.read(buffer, sizeof(buffer));
+        int bytesRead = file.gcount();
+        int bytes = send(m_socketFd, buffer, bytesRead, 0);
+        if (bytes < 0)
+        {
+            std::cerr << "processWrite(): send()出错。" << std::endl;
+            break;
+        }
+        std::cout << "send(): " << bytes << " 字节报文内容已发送。" << std::endl;
+    }
+    file.close();
+
     resetEpollEvent(EPOLLIN);
     std::cout << "processWrite(): 完成。" << std::endl;
+    clear();
 }
 
 void HTTPConnection::clear()
 {
     m_readBufferSize = 0;
     m_writeBufferSize = 0;
+    m_resourcePath[0] = '\0';
+}
+
+void HTTPConnection::addResponseHead(const std::string &lineHead, const std::string &lineContent)
+{
+    int bytes = 0;
+    if ((bytes = sprintf(m_writeBuffer + m_writeBufferSize, (lineHead + ": %s\r\n").c_str(), lineContent.c_str())) < 0)
+    {
+        std::cerr << "addResponseHead(): sprintf()出错。" << std::endl;
+        return ;
+    }
+    m_writeBufferSize += bytes;
+}
+
+void HTTPConnection::addResponseLine(const std::string &line)
+{
+    int bytes = 0;
+    if ((bytes = sprintf(m_writeBuffer + m_writeBufferSize, "%s\r\n", line.c_str())) < 0)
+    {
+        std::cerr << "addResponseLine(): sprintf()出错。" << std::endl;
+        return ;
+    }
+    m_writeBufferSize += bytes;
 }

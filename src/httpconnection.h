@@ -2,6 +2,7 @@
 #define _HTTPCONNECTION_H_
 
 #include <linux/limits.h>
+#include <string>
 
 const int READ_BUFFER_SIZE = 2048;
 const int WRITE_BUFFER_SIZE = 2048;
@@ -33,7 +34,8 @@ public:
     HTTPConnection();
     ~HTTPConnection();
     void processRead();
-    RequestResult readAndParse();
+    void readRequest();
+    RequestResult parseRequest();
     void init(int socketFd, int epollFd, WorkState workState)
     {
         m_socketFd = socketFd;
@@ -49,6 +51,8 @@ public:
     void processWrite();
     WorkState m_workState;
     void clear();
+    void addResponseHead(const std::string &lineHead, const std::string &lineContent);
+    void addResponseLine(const std::string &line);
 private:
     int m_socketFd;
     int m_epollFd;
