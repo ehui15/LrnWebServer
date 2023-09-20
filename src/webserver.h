@@ -2,6 +2,7 @@
 #define _WEBSERVER_H_
 
 #include "threadpool.h"
+#include "timerlist.h"
 
 class HTTPConnection;
 
@@ -15,16 +16,19 @@ private:
         WriteTask
     };
     int setNonblocking(int fd);
-    void addConnectionFd(int epollFd, int fd);
-    // void doWithRead(int sockFd);
-    // void doWithWrite(int sockFd);
+    void addFd(int epollFd, int fd, bool oneShot);
     void dispatchTask(int sockFd, TaskType taskType);
+
+    static void alarmHandler(int signal);
+    static int m_pipeFd[2];
+
     int m_listenFd;
     int m_port;
     int m_epollFd;
     int m_epollTriggerMode; // true代表ET，false代表LT
     ThreadPool<HTTPConnection> m_theadPool;
     HTTPConnection *m_pConnections;
+    TimerList m_timerList;
 public:
     WebServer(int port);
     ~WebServer();

@@ -9,6 +9,8 @@
 #include <iostream>
 #include <fstream>
 
+#include "timerlist.h"
+
 const int LINE_BUFFER_SIZE = 1024;
 
 HTTPConnection::HTTPConnection()
@@ -46,19 +48,19 @@ void HTTPConnection::readRequest()
             // 表示数据已经全部读完
             if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
             {
-                std::cout << "doWithRead(): 读完。" << std::endl;
+                std::cout << "readRequest(): 读完。" << std::endl;
                 break;
             }
         }
         else if (readBytes == 0)
         {
-            std::cerr << "doWithRead(): 远程客户已经关闭连接。" << std::endl;
+            std::cerr << "readRequest(): 远程客户已经关闭连接。" << std::endl;
             closeSocket();
         }
         else
         {
             m_readBufferSize += readBytes;
-            std::cout << "doWithRead(): 读取" << readBytes << "字节的内容。" << std::endl;
+            std::cout << "readRequest(): 读取" << readBytes << "字节的内容。" << std::endl;
         }
     }
 }
@@ -178,12 +180,12 @@ HTTPConnection::RequestResult HTTPConnection::parseHeaderLine(char *pLineBuffer)
 
 void HTTPConnection::prepareWrite()
 {
+    std::cout << "URL: " << m_resourcePath << std::endl;
     // 构造响应头
     if (strcasecmp(m_resourcePath, "/") == 0)
     {
         strcat(m_resourcePath, "index.html");
     }
-    std::cout << "请求URL: " << m_resourcePath << std::endl;
     // 添加文件后缀
     std::string url(m_resourcePath);
     if (url.find('.') == std::string::npos)
@@ -194,7 +196,6 @@ void HTTPConnection::prepareWrite()
     char filePath[PATH_MAX] = "../resource";
     strcat(filePath, m_resourcePath);
     strcpy(m_resourcePath, filePath);
-    puts(m_resourcePath);
     std::ifstream fileStream(m_resourcePath);
     if (fileStream.good())
     {
@@ -251,7 +252,8 @@ void HTTPConnection::closeSocket()
 {
     epoll_ctl(m_epollFd, EPOLL_CTL_DEL, m_socketFd, 0);
     close(m_socketFd);
-    clear();
+    m_pTimer = nullptr;
+    clearBuffer();
 }
 
 void HTTPConnection::processWrite()
@@ -294,10 +296,10 @@ void HTTPConnection::processWrite()
 
     resetEpollEvent(EPOLLIN);
     std::cout << "processWrite(): 完成。" << std::endl;
-    clear();
+    clearBuffer();
 }
 
-void HTTPConnection::clear()
+void HTTPConnection::clearBuffer()
 {
     m_readBufferSize = 0;
     m_writeBufferSize = 0;

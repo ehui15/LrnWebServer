@@ -7,6 +7,8 @@
 const int READ_BUFFER_SIZE = 2048;
 const int WRITE_BUFFER_SIZE = 2048;
 
+class Timer;
+
 class HTTPConnection
 {
 public:
@@ -50,9 +52,11 @@ public:
     void closeSocket();
     void processWrite();
     WorkState m_workState;
-    void clear();
+    void clearBuffer();
     void addResponseHead(const std::string &lineHead, const std::string &lineContent);
     void addResponseLine(const std::string &line);
+
+    Timer *m_pTimer = nullptr;
 private:
     int m_socketFd;
     int m_epollFd;
